@@ -2,36 +2,67 @@ name: Friday Azure AI Post
 
 on:
   schedule:
-    # Runs every Friday at 9:00 AM UTC
+    # Runs every Friday at 9:00 AM UTC (2:30 PM IST)
     - cron: '0 9 * * 5'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:  # Manual trigger
     inputs:
       auto_post:
         description: 'Auto-post to LinkedIn?'
         required: false
         default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  PYTHON_VERSION: '3.10'
 
 jobs:
   generate-and-post:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
-    - uses: actions/checkout@v4
+    # Step 1: Checkout code
+    - name: Checkout repository
+      uses: actions/checkout@v4  # Latest v4
     
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    # Step 2: Setup Python
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v5  # Latest v5
       with:
-        python-version: '3.10'
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'  # Speed up pip installs
     
-    - name: Install dependencies
+    # Step 3: Cache Playwright (save time)
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4  # Latest v4
+      id: playwright-cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+    
+    # Step 4: Install Python packages
+    - name: Install Python dependencies
       run: |
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
+    
+    # Step 5: Install Playwright (only if not cached)
+    - name: Install Playwright browsers
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      run: |
         playwright install chromium
-        playwright install-deps
-      
+        playwright install-deps chromium
+    
+    # Step 6: Create directories
     - name: Create data directory
       run: mkdir -p data
     
+    # Step 7: Generate post
     - name: Generate LinkedIn Post
       env:
         LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
@@ -40,19 +71,22 @@ jobs:
         AUTO_POST: ${{ github.event.inputs.auto_post || 'false' }}
       run: python main.py
     
+    # Step 8: Upload artifacts (FIXED - using v4)
     - name: Upload generated post
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4  # ✅ Now using v4
       with:
-        name: linkedin-post
+        name: linkedin-post-${{ github.run_id }}
         path: |
           data/post_history.json
           data/latest_news.json
           data/agent.log
+        retention-days: 30
     
+    # Step 9: Commit history back
     - name: Commit post history
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "Azure AI Agent"
-        git add data/
-        git commit -m "🤖 Automated Friday post $(date +'%Y-%m-%d')" || echo "No changes to commit"
+        git add data/post_history.json data/latest_news.json
+        git diff --staged --quiet || git commit -m "🤖 Automated Friday post $(date +'%Y-%m-%d')"
         git push
