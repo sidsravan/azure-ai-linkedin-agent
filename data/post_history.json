@@ -12,7 +12,9 @@
       "content": "\ud83e\udd16 Azure AI: Making Technology Work for Everyone\n\nThis week, I want to talk about why Microsoft Azure AI is a game-changer for businesses of all sizes.\n\n\ud83d\udcca The Big Picture:\n\u2022 Azure AI services help companies add smart features without needing a PhD in machine learning\n\u2022 From chatbots to image recognition, it's all available as ready-to-use APIs\n\u2022 You only pay for what you use - perfect for startups!\n\n\ud83d\udca1 Simple Analogy:\nUsing Azure AI is like ordering at a restaurant:\n- You don't need to know how to cook\n- You just tell them what you want\n- They handle the complex kitchen work\n- You enjoy the delicious results!\n\n\ud83d\ude80 Getting Started:\n1. Create a free Azure account\n2. Try Azure AI Studio (no coding needed!)\n3. Experiment with pre-built AI models\n4. Deploy your first smart application\n\nThe future of AI is accessible to everyone. What will you build?\n\n#MicrosoftAzure #AI #CloudComputing #Innovation",
       "posted_at": "2026-05-01T20:33:53.358102",
       "metadata": {},
-      "char_count": 901
+      "char_count": 901,
+      "status": "published",
+      "published_at": "2026-05-02T00:15:46.912021"
     },
     {
       "id": 3,
@@ -50,5 +52,5 @@
     }
   ],
   "total_posts": 5,
-  "last_updated": "2026-05-01T22:42:19.069353"
+  "last_updated": "2026-05-02T00:15:46.912037"
 }
