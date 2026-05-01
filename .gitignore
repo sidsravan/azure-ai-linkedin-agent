@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+env/
+.env
+
+# Data files
+data/*.json
+data/*.log
+data/*.txt
+data/screenshots/
+!data/.gitkeep
+
+# Model files
+models/
+*.bin
+*.pt
+
+# OS
+.DS_Store
+Thumbs.db

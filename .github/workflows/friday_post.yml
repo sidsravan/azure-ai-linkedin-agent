@@ -1,84 +1,140 @@
-name: Friday Azure AI Post
+name: 🤖 Friday Azure AI Post Generator
 
 on:
   schedule:
-    # Runs every Friday at 9:00 AM UTC (2:30 PM IST)
-    - cron: '0 9 * * 5'
-  workflow_dispatch:  # Manual trigger
+    # Runs every Friday at 4:00 AM UTC (9:30 AM IST)
+    - cron: '0 4 * * 5'
+  
+  workflow_dispatch:
     inputs:
-      auto_post:
-        description: 'Auto-post to LinkedIn?'
+      use_ai_model:
+        description: 'Use AI model for generation?'
+        type: boolean
+        default: false
         required: false
-        default: 'false'
-        type: choice
-        options:
-          - 'false'
-          - 'true'
+  
+  # Allow manual trigger for testing
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/friday_post.yml'
+      - 'main.py'
+      - 'src/**'
 
 env:
-  PYTHON_VERSION: '3.10'
+  PYTHON_VERSION: '3.11'
 
 jobs:
-  generate-and-post:
+  generate-post:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     
     steps:
-    # Step 1: Checkout code
-    - name: Checkout repository
-      uses: actions/checkout@v4  # Latest v4
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 🐍 Setup Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: 📦 Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: 📁 Create data directory
+        run: mkdir -p data
+      
+      - name: 🤖 Generate LinkedIn Post
+        env:
+          LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
+          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+          MODEL_NAME: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
+        run: |
+          if [ "${{ github.event.inputs.use_ai_model }}" = "true" ]; then
+            python main.py --model "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+          else
+            python main.py --model "template"
+          fi
+      
+      - name: 📤 Upload generated post
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkedin-post-${{ github.run_id }}
+          path: |
+            data/ready_to_post.txt
+            data/post_history.json
+            data/latest_news.json
+            data/agent_*.log
+          retention-days: 30
+      
+      - name: 💾 Cache post history
+        uses: actions/cache@v4
+        with:
+          path: data/post_history.json
+          key: post-history-${{ github.run_id }}
+          restore-keys: |
+            post-history-
+      
+      - name: 📊 Display post statistics
+        run: |
+          if [ -f data/ready_to_post.txt ]; then
+            echo "=== POST GENERATED SUCCESSFULLY ==="
+            echo "Character count: $(wc -c < data/ready_to_post.txt)"
+            echo "First line: $(head -n 1 data/ready_to_post.txt)"
+            echo ""
+            echo "📋 To publish this post:"
+            echo "   1. Download the artifact 'linkedin-post-${{ github.run_id }}'"
+            echo "   2. Or run locally: python publish.py"
+          else
+            echo "❌ Post generation may have failed"
+          fi
+      
+      - name: 📝 Create summary comment
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let postPreview = 'No post generated';
+            
+            try {
+              postPreview = fs.readFileSync('data/ready_to_post.txt', 'utf8').substring(0, 300);
+            } catch(e) {
+              console.log('Could not read post file');
+            }
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: `## 🤖 Friday Post Generated!\n\n`
+                + `📅 Date: ${new Date().toISOString().split('T')[0]}\n`
+                + `📝 Preview:\n\`\`\`\n${postPreview}...\n\`\`\`\n\n`
+                + `### To Publish:\n`
+                + `1. Download artifacts from this workflow run\n`
+                + `2. Run locally: \`python publish.py\`\n`
+                + `3. Or manually copy from \`ready_to_post.txt\`\n\n`
+                + `[📤 Post to LinkedIn](https://www.linkedin.com/feed/)`
+            });
+
+  notify:
+    needs: generate-post
+    runs-on: ubuntu-latest
+    if: success()
     
-    # Step 2: Setup Python
-    - name: Set up Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v5  # Latest v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-        cache: 'pip'  # Speed up pip installs
-    
-    # Step 3: Cache Playwright (save time)
-    - name: Cache Playwright browsers
-      uses: actions/cache@v4  # Latest v4
-      id: playwright-cache
-      with:
-        path: ~/.cache/ms-playwright
-        key: ${{ runner.os }}-playwright-${{ hashFiles('requirements.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-playwright-
-    
-    # Step 4: Install Python packages
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-    
-    # Step 5: Install Playwright (only if not cached)
-    - name: Install Playwright browsers
-      if: steps.playwright-cache.outputs.cache-hit != 'true'
-      run: |
-        playwright install chromium
-        playwright install-deps chromium
-    
-    # Step 6: Create directories
-    - name: Create data directory
-      run: mkdir -p data
-    
-    # Step 7: Generate post
-    - name: Generate LinkedIn Post
-      env:
-        LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
-        LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
-        MODEL_NAME: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
-        AUTO_POST: ${{ github.event.inputs.auto_post || 'false' }}
-      run: python main.py
-    
-    # Step 8: Upload artifacts (FIXED - using v4)
-    - name: Upload generated post
-      uses: actions/upload-artifact@v4  # ✅ Now using v4
-      with:
-        name: linkedin-post-${{ github.run_id }}
-        path: |
-          data/post_history.json
-          data/latest_news.json
-          data/agent.log
-        retention-days: 30
-    
+    steps:
+      - name: 📬 Create notification file
+        run: |
+          echo "Post generation completed at $(date)" > notification.txt
+          echo "Check workflow artifacts for the generated LinkedIn post." >> notification.txt
+      
+      - name: 📤 Upload notification
+        uses: actions/upload-artifact@v4
+        with:
+          name: notification-${{ github.run_id }}
+          path: notification.txt
+          retention-days: 7

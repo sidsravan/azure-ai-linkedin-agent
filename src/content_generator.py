@@ -1,85 +1,186 @@
+"""Content Generator - Creates LinkedIn posts using open-source LLM"""
+
 from transformers import pipeline, AutoTokenizer, AutoModelForCausalLM
 import torch
-import logging
-from typing import List, Dict
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+import hashlib
+from typing import List, Dict, Optional
+from .utils import logger, ConfigManager
 
 class ContentGenerator:
-    """Uses open-source LLM to generate LinkedIn posts from news"""
+    """Generate LinkedIn posts using open-source LLMs"""
     
-    def __init__(self, model_name: str = "microsoft/phi-2"):
-        self.model_name = model_name
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        logger.info(f"Loading model {model_name} on {self.device}")
+    # Pre-written templates for reliable fallback
+    TEMPLATES = {
+        'new_release': """
+🚀 Exciting Azure AI Update!
+
+I'm thrilled to share the latest from Microsoft Azure AI: **{title}**!
+
+📌 What's New:
+{summary}
+
+💡 Why This Matters:
+Think of it as adding a supercomputer to your application's brain - suddenly, it can understand, learn, and help users in amazing new ways!
+
+✨ Key Benefits for You:
+• 🎯 **Accessibility**: No PhD required to use advanced AI
+• 💰 **Cost-Effective**: Pay only for what you use
+• ⚡ **Quick Integration**: Ready-to-use APIs in minutes
+• 🔒 **Enterprise-Grade Security**: Built on Azure's trusted infrastructure
+
+🚀 Getting Started:
+1. Visit Azure AI Studio
+2. Try the pre-built models
+3. Deploy with confidence
+
+The AI revolution is here, and Azure is making it accessible to everyone!
+
+#MicrosoftAzure #AzureAI #CloudComputing #AI {extra_tags}
+        """,
         
+        'general_update': """
+🌐 Azure AI: Making Technology Smarter
+
+This week in Microsoft Azure AI, I found something really interesting that I believe will reshape how we think about cloud AI services.
+
+🎯 **Key Insight**: {title}
+
+{summary}
+
+📊 **The Bigger Picture**:
+Microsoft continues to democratize AI, making sophisticated tools accessible to developers of all skill levels. Here's what stands out:
+
+• **Simplicity**: Complex AI capabilities wrapped in user-friendly interfaces
+• **Scalability**: From startup to enterprise, Azure AI grows with you
+• **Integration**: Seamlessly works with your existing tools and workflows
+
+💡 **Real-World Application**:
+Imagine being able to add intelligent features to your applications without worrying about the underlying infrastructure. That's the power of Azure AI.
+
+🔗 Learn more: {link}
+
+What AI capability would transform your work? Share below! 👇
+
+#MicrosoftAzure #CloudAI #Innovation #TechNews #AzureAI
+        """
+    }
+    
+    def __init__(self, model_name: Optional[str] = None):
+        """
+        Initialize content generator with optional model
+        
+        Args:
+            model_name: HuggingFace model name or None for template mode
+        """
+        self.model_name = model_name or ConfigManager.get_env_var(
+            'MODEL_NAME', 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
+        )
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.generator = None
+        self.model_loaded = False
+        
+        # Try loading model if not explicitly set to None
+        if model_name != "template":
+            self._load_model()
+    
+    def _load_model(self):
+        """Try to load the LLM model"""
         try:
-            # Try loading smaller model first for CPU
-            if self.device == "cpu":
-                model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-                logger.info(f"CPU detected, switching to {model_name}")
+            logger.info(f"Loading model: {self.model_name}")
+            logger.info(f"Device: {self.device}")
             
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+            # For CPU, use smaller model
+            if self.device == "cpu" and "tinyllama" not in self.model_name.lower():
+                logger.info("CPU detected, switching to TinyLlama for better performance")
+                self.model_name = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+            
+            # Load tokenizer and model
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
+                self.model_name,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                device_map="auto"
+                low_cpu_mem_usage=True,
+                device_map="auto" if self.device == "cuda" else None
             )
             
+            # Create text generation pipeline
             self.generator = pipeline(
                 "text-generation",
                 model=self.model,
                 tokenizer=self.tokenizer,
-                max_new_tokens=500
+                max_new_tokens=400,
+                temperature=0.7,
+                do_sample=True,
+                top_p=0.9,
+                top_k=50,
+                repetition_penalty=1.1
             )
-            logger.info("Model loaded successfully")
+            
+            self.model_loaded = True
+            logger.info("✅ Model loaded successfully")
             
         except Exception as e:
             logger.warning(f"Could not load model: {e}")
-            logger.info("Falling back to rule-based generation")
-            self.generator = None
+            logger.info("Using template-based generation instead")
+            self.model_loaded = False
     
-    def generate_post(self, news: List[Dict], style: str = "beginner-friendly") -> str:
-        """Generate LinkedIn post from news"""
-        if not news:
-            return self._get_default_post()
+    def generate_post(self, news: List[Dict]) -> Dict:
+        """
+        Generate a LinkedIn post from news items
         
-        # Prepare context
-        news_summary = self._prepare_news_summary(news)
-        
-        if self.generator:
-            return self._llm_generate(news_summary, style)
+        Args:
+            news: List of news items
+            
+        Returns:
+            Dict with post content and metadata
+        """
+        if self.model_loaded:
+            post_content = self._ai_generate(news)
         else:
-            return self._template_generate(news)
+            post_content = self._template_generate(news)
+        
+        # Calculate hash for deduplication
+        content_hash = hashlib.md5(post_content.encode()).hexdigest()
+        
+        return {
+            'content': post_content,
+            'metadata': {
+                'model_used': self.model_name if self.model_loaded else 'template',
+                'news_count': len(news),
+                'content_hash': content_hash,
+                'char_count': len(post_content),
+                'generated_at': 'auto'
+            }
+        }
     
-    def _prepare_news_summary(self, news: List[Dict]) -> str:
-        """Prepare news summary for LLM"""
-        summary = "Recent Microsoft Azure and AI news:\n\n"
-        for i, item in enumerate(news[:3], 1):  # Use top 3 news
-            summary += f"{i}. {item['title']}\n"
-            summary += f"   {item['summary'][:200]}\n\n"
-        return summary
-    
-    def _llm_generate(self, context: str, style: str) -> str:
-        """Generate post using LLM"""
-        prompt = f"""You are a cloud computing expert writing a LinkedIn post about Azure AI news.
-Write an engaging, beginner-friendly LinkedIn post that includes:
-1. A catchy opening hook
-2. Key takeaways from the news (simplified for beginners)
-3. Real-world examples or analogies
-4. Actionable insights
-5. Clear bullet points
-6. Relevant hashtags
+    def _ai_generate(self, news: List[Dict]) -> str:
+        """Generate post using AI model"""
+        # Prepare context
+        context = self._prepare_context(news)
+        
+        # Create prompt
+        prompt = f"""<|system|>
+You are an expert cloud computing content creator writing a LinkedIn post about Azure AI.
 
-Keep it under 1300 characters. Use simple language and add enthusiasm!
+Guidelines:
+- Write in enthusiastic, professional tone
+- Use simple analogies for complex concepts
+- Include practical, actionable insights
+- Add relevant emojis and bullet points
+- Keep under 1300 characters
+- End with engaging question
 
-News context:
+</|system|>
+<|user|>
+Write a LinkedIn post about these Azure AI updates:
+
 {context}
-
-LinkedIn Post:"""
-
+</|user|>
+<|assistant|>
+"""
+        
         try:
+            # Generate text
             result = self.generator(
                 prompt,
                 max_new_tokens=400,
@@ -87,72 +188,127 @@ LinkedIn Post:"""
                 do_sample=True,
                 top_p=0.9
             )
-            return result[0]['generated_text'].replace(prompt, '').strip()
+            
+            # Extract generated text
+            if isinstance(result, list):
+                generated = result[0]['generated_text']
+            else:
+                generated = result
+            
+            # Remove prompt from output
+            post = generated.replace(prompt, '').strip()
+            
+            # Clean up the post
+            post = self._clean_post(post)
+            
+            return post
+            
         except Exception as e:
-            logger.error(f"LLM generation failed: {e}")
-            return self._template_generate([])
+            logger.error(f"AI generation failed: {e}")
+            return self._template_generate(news)
     
     def _template_generate(self, news: List[Dict]) -> str:
-        """Fallback template-based generation"""
+        """Generate post using templates (reliable fallback)"""
         if not news:
+            # Default post when no news available
             return self._get_default_post()
         
-        main_story = news[0]
+        # Get most relevant news item
+        main_news = news[0]
         
-        post = f"""🚀 Exciting Azure AI Updates This Week!
-
-I've been exploring the latest Microsoft Azure AI announcements, and there's something really cool I want to share!
-
-📌 {main_story['title']}
-
-Here's what you need to know (in plain English):
-
-✨ Key Highlights:
-• {main_story['summary'][:150]}...
-
-💡 Why This Matters:
-Think of it like giving superpowers to your applications - they can now understand, reason, and help users in ways that weren't possible before!
-
-🎯 Real-World Impact:
-• Small businesses can now access enterprise-grade AI
-• Developers can build smarter apps with less code
-• End users get better, more personalized experiences
-
-🔑 Quick Takeaway:
-The barrier to entry for AI keeps getting lower. If you haven't started exploring Azure AI services yet, now is the perfect time!
-
-🤔 Question for you: What's one task you'd love to automate with AI?
-
-#MicrosoftAzure #AI #CloudComputing #MicrosoftAI #TechInnovation
+        # Determine which template to use
+        if any(keyword in main_news['title'].lower() for keyword in ['release', 'announce', 'launch', 'new']):
+            template = self.TEMPLATES['new_release']
+        else:
+            template = self.TEMPLATES['general_update']
         
-Read more: {main_story['link']}"""
+        # Extract hashtags from content
+        extra_tags = ' '.join(self._extract_hashtags(main_news))
         
-        return post[:1300]
+        # Fill template
+        post = template.format(
+            title=main_news['title'],
+            summary=main_news['summary'][:200],
+            link=main_news.get('link', 'https://azure.microsoft.com'),
+            extra_tags=extra_tags
+        )
+        
+        # Clean and ensure length limit
+        return self._clean_post(post)[:1300]
+    
+    def _prepare_context(self, news: List[Dict], max_items: int = 3) -> str:
+        """Prepare news context for LLM"""
+        context = "Recent Azure AI news:\n\n"
+        
+        for i, item in enumerate(news[:max_items], 1):
+            context += f"{i}. Title: {item['title']}\n"
+            context += f"   Summary: {item['summary'][:150]}...\n\n"
+        
+        return context
+    
+    def _clean_post(self, text: str) -> str:
+        """Clean and optimize post content"""
+        # Remove multiple newlines
+        import re
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        
+        # Remove excessive spaces
+        text = re.sub(r' {2,}', ' ', text)
+        
+        # Ensure hashtag formatting
+        text = re.sub(r'#(\w+)', r'#\1', text)
+        
+        # Add default hashtags if none present
+        if not re.search(r'#\w+', text):
+            text += '\n\n#MicrosoftAzure #AI #CloudComputing #AzureAI'
+        
+        return text.strip()
+    
+    def _extract_hashtags(self, news: Dict) -> List[str]:
+        """Extract relevant hashtags from news"""
+        hashtags = ['#MicrosoftAzure', '#AzureAI']
+        
+        text = (news.get('title', '') + ' ' + news.get('summary', '')).lower()
+        
+        hashtag_map = {
+            'openai': '#OpenAI',
+            'copilot': '#MicrosoftCopilot',
+            'gpt': '#GPT',
+            'machine learning': '#MachineLearning',
+            'cognitive': '#CognitiveServices',
+            'security': '#CloudSecurity',
+            'kubernetes': '#Kubernetes',
+            'devops': '#DevOps'
+        }
+        
+        for keyword, tag in hashtag_map.items():
+            if keyword in text and tag not in hashtags:
+                hashtags.append(tag)
+        
+        return hashtags[:3]  # Limit to 3 extra hashtags
     
     def _get_default_post(self) -> str:
-        """Default post when no news available"""
-        return """🤖 Azure AI: Making Technology Work for Everyone
+        """Generate default post when no news is available"""
+        return """🚀 Getting Started with Azure AI: A Beginner's Guide
 
-This week, I want to talk about why Microsoft Azure AI is a game-changer for businesses of all sizes.
+I've been exploring Microsoft Azure AI services, and I'm amazed at how accessible they've become!
 
-📊 The Big Picture:
-• Azure AI services help companies add smart features without needing a PhD in machine learning
-• From chatbots to image recognition, it's all available as ready-to-use APIs
-• You only pay for what you use - perfect for startups!
+💡 **Simple Analogy**: Think of Azure AI like a restaurant kitchen:
+• You don't need to know how to cook (complex ML algorithms)
+• You just order what you want (choose an AI service)
+• The kitchen handles everything (Azure infrastructure)
+• You enjoy the delicious results (intelligent applications)
 
-💡 Simple Analogy:
-Using Azure AI is like ordering at a restaurant:
-- You don't need to know how to cook
-- You just tell them what you want
-- They handle the complex kitchen work
-- You enjoy the delicious results!
+🎯 **3 Ways to Start Today**:
+1. **Azure OpenAI Service** - Add ChatGPT-like capabilities to your apps
+2. **Cognitive Services** - See, hear, speak, and understand your users
+3. **Azure Machine Learning** - Build custom AI models without deep expertise
 
-🚀 Getting Started:
-1. Create a free Azure account
-2. Try Azure AI Studio (no coding needed!)
-3. Experiment with pre-built AI models
-4. Deploy your first smart application
+📊 **Why This Matters**: 
+The barrier to AI adoption is lower than ever. Small teams can now compete with tech giants!
 
-The future of AI is accessible to everyone. What will you build?
+🔗 Start your AI journey: https://azure.microsoft.com/free
 
-#MicrosoftAzure #AI #CloudComputing #Innovation"""
+What would you build with AI? Share your ideas below! 👇
+
+#MicrosoftAzure #AI #CloudComputing #Innovation #TechForEveryone"""
