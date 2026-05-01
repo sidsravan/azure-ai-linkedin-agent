@@ -82,11 +82,3 @@ jobs:
           data/agent.log
         retention-days: 30
     
-    # Step 9: Commit history back
-    - name: Commit post history
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "Azure AI Agent"
-        git add data/post_history.json data/latest_news.json
-        git diff --staged --quiet || git commit -m "🤖 Automated Friday post $(date +'%Y-%m-%d')"
-        git push
