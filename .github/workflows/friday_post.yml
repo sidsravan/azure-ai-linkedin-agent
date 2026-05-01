@@ -10,25 +10,49 @@ on:
         description: 'Auto-post to LinkedIn?'
         required: false
         default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+env:
+  PYTHON_VERSION: '3.10'
 
 jobs:
   generate-and-post:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
     
-    - name: Set up Python
-      uses: actions/setup-python@v4
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: ${{ env.PYTHON_VERSION }}
+        cache: 'pip'  # Enable pip caching for faster installs
     
-    - name: Install dependencies
+    - name: Cache Playwright browsers
+      uses: actions/cache@v4
+      id: playwright-cache
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-playwright-
+    
+    - name: Install Python dependencies
       run: |
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
+    
+    - name: Install Playwright browsers
+      if: steps.playwright-cache.outputs.cache-hit != 'true'
+      run: |
         playwright install chromium
-        playwright install-deps
-      
+        playwright install-deps chromium
+    
     - name: Create data directory
       run: mkdir -p data
     
@@ -40,19 +64,22 @@ jobs:
         AUTO_POST: ${{ github.event.inputs.auto_post || 'false' }}
       run: python main.py
     
-    - name: Upload generated post
-      uses: actions/upload-artifact@v3
+    - name: Upload generated post (fixed to v4)
+      uses: actions/upload-artifact@v4  # ← Changed from v3 to v4
       with:
-        name: linkedin-post
+        name: linkedin-post-${{ github.run_id }}
         path: |
           data/post_history.json
           data/latest_news.json
           data/agent.log
+        retention-days: 30  # Keep artifacts for 30 days
     
     - name: Commit post history
       run: |
         git config --local user.email "github-actions[bot]@users.noreply.github.com"
         git config --local user.name "Azure AI Agent"
-        git add data/
+        git add data/post_history.json data/latest_news.json
         git commit -m "🤖 Automated Friday post $(date +'%Y-%m-%d')" || echo "No changes to commit"
         git push
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
