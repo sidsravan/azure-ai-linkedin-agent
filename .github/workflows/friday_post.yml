@@ -1,0 +1,58 @@
+name: Friday Azure AI Post
+
+on:
+  schedule:
+    # Runs every Friday at 9:00 AM UTC
+    - cron: '0 9 * * 5'
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      auto_post:
+        description: 'Auto-post to LinkedIn?'
+        required: false
+        default: 'false'
+
+jobs:
+  generate-and-post:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        playwright install chromium
+        playwright install-deps
+      
+    - name: Create data directory
+      run: mkdir -p data
+    
+    - name: Generate LinkedIn Post
+      env:
+        LINKEDIN_EMAIL: ${{ secrets.LINKEDIN_EMAIL }}
+        LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+        MODEL_NAME: 'TinyLlama/TinyLlama-1.1B-Chat-v1.0'
+        AUTO_POST: ${{ github.event.inputs.auto_post || 'false' }}
+      run: python main.py
+    
+    - name: Upload generated post
+      uses: actions/upload-artifact@v3
+      with:
+        name: linkedin-post
+        path: |
+          data/post_history.json
+          data/latest_news.json
+          data/agent.log
+    
+    - name: Commit post history
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "Azure AI Agent"
+        git add data/
+        git commit -m "🤖 Automated Friday post $(date +'%Y-%m-%d')" || echo "No changes to commit"
+        git push

@@ -1,0 +1,17 @@
+# Core dependencies
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+feedparser>=6.0.0
+python-dotenv>=1.0.0
+
+# Open-source LLM
+transformers>=4.36.0
+torch>=2.1.0
+accelerate>=0.25.0
+
+# LinkedIn automation
+playwright>=1.40.0
+
+# Utilities
+schedule>=1.2.0
+pyyaml>=6.0
